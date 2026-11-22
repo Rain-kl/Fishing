@@ -1,6 +1,6 @@
 services:
   fishing:
-    image: ${FISHING_IMAGE:-ghcr.io/owner/fishing:latest}
+    image: ${FISHING_IMAGE:-ghcr.io/rain-kl/fishing:latest}
     build:
       context: .
       dockerfile: Dockerfile
