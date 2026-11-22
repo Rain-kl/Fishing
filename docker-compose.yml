@@ -1,0 +1,20 @@
+services:
+  fishing:
+    image: ${FISHING_IMAGE:-ghcr.io/owner/fishing:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fishing-honeypot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "2222-2232:2222-2232"
+    # 若需直接在宿主机监听 22 等任意动态添加的端口（Linux 环境适用），
+    # 可取消下方 network_mode 注释并移除上方 ports 映射：
+    # network_mode: host
+    volumes:
+      - ./data:/data
+    environment:
+      FISHING_ADDR: ":8080"
+      FISHING_DATA_DIR: "/data"
+      FISHING_BIND_HOST: "0.0.0.0"

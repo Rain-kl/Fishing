@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FISHING // SSH 蜜罐控制台</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="cmd-section" aria-label="系统概览">
+      <div class="cmd-line">
+        <span class="cmd-prompt">$</span>
+        <h1 class="cmd-text">fishing --console --mode=ssh-honeypot</h1>
+        <span class="cursor-block" aria-hidden="true"></span>
+      </div>
+      <div class="cmd-output">
+        <div class="comment-line"># SSH 仿真蜜罐控制台：记录来源 IP、认证凭据及会话命令，无真实系统执行能力。</div>
+        <div class="overview-grid" id="overview-metrics">
+          <div class="metric-item">
+            <span class="metric-label">HONEYPOTS</span>
+            <span class="metric-value" id="stat-honeypots">0 / 0</span>
+            <span class="metric-bar" id="bar-honeypots">░░░░░░░░░░</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">CONNECTIONS</span>
+            <span class="metric-value" id="stat-connections">0</span>
+            <span class="metric-note" id="stat-auth-split">OK 0 / FAIL 0</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">COMMANDS</span>
+            <span class="metric-value accent-magenta" id="stat-commands">0</span>
+            <span class="metric-note">已记录会话指令</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">UNIQUE IPS</span>
+            <span class="metric-value accent-cyan" id="stat-unique-ips">0</span>
+            <span class="metric-note">独立访问来源</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div id="global-banner" class="banner hidden" role="alert"></div>
+
+    <main class="main-stack">
+      <section class="terminal-panel" aria-labelledby="honeypots-heading">
+        <div class="panel-header">
+          <span class="panel-path" id="honeypots-heading">~/fishing/honeypots</span>
+          <div class="panel-actions">
+            <button type="button" class="btn btn-primary" id="btn-open-create">[+ 添加蜜罐]</button>
+          </div>
+        </div>
+
+        <div class="cmd-block-inline">
+          <div class="cmd-line-sm">
+            <span class="cmd-prompt">$</span>
+            <span class="cmd-cmd">fishing ps --type=ssh --all</span>
+          </div>
+          <div class="cmd-output-sm">
+            <div class="comment-line"># 创建即启动对应 TCP 端口监听；默认脱敏展示登录密码，可按行切换明文视图。</div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="aligned-table" aria-label="蜜罐实例列表">
+            <thead>
+              <tr>
+                <th>NAME / ID</th>
+                <th>TYPE</th>
+                <th>PORT</th>
+                <th>CREDENTIALS</th>
+                <th>STATE</th>
+                <th>TELEMETRY</th>
+                <th>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody id="honeypots-tbody">
+              <tr>
+                <td colspan="7" class="comment-cell"># 正在读取蜜罐实例列表...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="terminal-panel" aria-labelledby="logs-heading">
+        <div class="panel-header">
+          <span class="panel-path" id="logs-heading">~/fishing/logs</span>
+          <div class="panel-actions">
+            <button type="button" class="btn" id="btn-toggle-poll">[自动刷新: 开]</button>
+            <button type="button" class="btn" id="btn-refresh-logs">[刷新]</button>
+            <button type="button" class="btn btn-warn" id="btn-clear-logs">[清空日志]</button>
+          </div>
+        </div>
+
+        <div class="cmd-block-inline">
+          <div class="cmd-line-sm">
+            <span class="cmd-prompt">$</span>
+            <span class="cmd-cmd">tail -n 200 -f /data/logs.jsonl</span>
+          </div>
+          <div class="comment-line" id="logs-summary"># 正在加载审计日志...</div>
+        </div>
+
+        <form class="filter-bar" id="log-filter-form" autocomplete="off">
+          <label class="filter-field">
+            <span class="field-label">INSTANCE</span>
+            <select id="filter-honeypot" class="input-ctrl">
+              <option value="">全部实例</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span class="field-label">EVENT</span>
+            <select id="filter-event" class="input-ctrl">
+              <option value="">全部事件</option>
+              <option value="auth_attempt">认证尝试 (AUTH)</option>
+              <option value="command">执行命令 (COMMAND)</option>
+              <option value="session_open">会话建立 (OPEN)</option>
+              <option value="session_close">会话关闭 (CLOSE)</option>
+            </select>
+          </label>
+          <label class="filter-field filter-grow">
+            <span class="field-label">FILTER (IP / USER / CMD)</span>
+            <input type="text" id="filter-query" class="input-ctrl" placeholder="输入来源 IP、用户名或命令关键词">
+          </label>
+          <div class="filter-actions">
+            <button type="submit" class="btn">[筛选]</button>
+            <button type="button" class="btn" id="btn-reset-filter">[重置]</button>
+          </div>
+        </form>
+
+        <div class="table-wrap">
+          <table class="aligned-table logs-table" aria-label="访问与命令审计日志">
+            <thead>
+              <tr>
+                <th>TIMESTAMP (UTC)</th>
+                <th>SOURCE IP</th>
+                <th>TARGET</th>
+                <th>EVENT</th>
+                <th>AUTH / USER</th>
+                <th>COMMAND / DETAIL</th>
+              </tr>
+            </thead>
+            <tbody id="logs-tbody">
+              <tr>
+                <td colspan="6" class="comment-cell"># 正在读取审计日志...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
+    <div class="terminal-panel modal-panel">
+      <div class="panel-header">
+        <span class="panel-path" id="create-modal-title">~/fishing/honeypots/new</span>
+        <button type="button" class="btn" id="btn-close-create" aria-label="关闭添加窗口">[x 关闭]</button>
+      </div>
+
+      <div class="cmd-block-inline">
+        <div class="cmd-line-sm">
+          <span class="cmd-prompt">$</span>
+          <span class="cmd-cmd">fishing create --interactive</span>
+        </div>
+        <div class="cmd-output-sm">
+          <div class="comment-line"># 当前版本仅支持 SSH 蜜罐。提交配置后将立即绑定端口并开始记录访问与命令日志。</div>
+        </div>
+      </div>
+
+      <form id="create-form" class="terminal-form" autocomplete="off">
+        <div class="form-row">
+          <label for="input-type" class="form-label">HONEYPOT TYPE</label>
+          <select id="input-type" name="type" class="input-ctrl" disabled>
+            <option value="ssh" selected>SSH (仿真远程终端)</option>
+          </select>
+          <span class="field-hint"># 当前版本仅支持 SSH 协议。</span>
+        </div>
+
+        <div class="form-row">
+          <label for="input-port" class="form-label">LISTEN PORT *</label>
+          <input type="number" id="input-port" name="port" class="input-ctrl" min="1" max="65535" required placeholder="例如 2222">
+          <span class="field-hint"># 有效范围 1–65535，不可与管理端口或已有蜜罐端口冲突。</span>
+        </div>
+
+        <div class="form-row">
+          <label for="input-username" class="form-label">LOGIN USERNAME *</label>
+          <input type="text" id="input-username" name="username" class="input-ctrl" maxlength="64" required placeholder="例如 root">
+          <span class="field-hint"># 匹配该用户名与下方密码时允许进入仿真 SSH 会话，其余尝试仅记录失败日志。</span>
+        </div>
+
+        <div class="form-row">
+          <label for="input-password" class="form-label">LOGIN PASSWORD *</label>
+          <input type="text" id="input-password" name="password" class="input-ctrl" maxlength="128" required placeholder="例如 admin123">
+          <span class="field-hint"># 蜜罐诱饵凭据，请勿使用真实生产环境口令。</span>
+        </div>
+
+        <div class="form-row">
+          <label for="input-name" class="form-label">INSTANCE NAME</label>
+          <input type="text" id="input-name" name="name" class="input-ctrl" maxlength="64" placeholder="留空表示自动生成（例如 ssh-2222）">
+        </div>
+
+        <div id="create-error" class="form-error hidden" role="alert"></div>
+
+        <div class="form-actions">
+          <button type="button" class="btn" id="btn-cancel-create">[取消]</button>
+          <button type="submit" class="btn btn-primary" id="btn-submit-create">[确认创建]</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <footer class="status-bar" aria-label="系统状态栏">
+    <div class="status-left">
+      <span id="status-session">FISHING // SSH-HONEYPOT [MAIN]</span>
+      <span id="status-version">DEV</span>
+    </div>
+    <div class="status-right">
+      <span id="status-active">ACTIVE: 0</span>
+      <span id="status-clock">00:00:00 UTC</span>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
