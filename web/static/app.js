@@ -1,6 +1,9 @@
 (() => {
   'use strict';
 
+  const COMMAND_COLLAPSE_THRESHOLD = 96;
+  const COMMAND_PREVIEW_LEN = 88;
+
   const state = {
     selectedID: null,
     selectedHoneypot: null,
@@ -11,6 +14,7 @@
     autoRefresh: true,
     pollTimer: null,
     revealedSecrets: new Set(),
+    expandedCommands: new Set(),
     lastFocusedElement: null,
   };
 
@@ -403,7 +407,43 @@
       const tdCmd = document.createElement('td');
       tdCmd.className = 'cmd-cell';
       if (entry.command) {
-        tdCmd.appendChild(makeSpan(`$ ${entry.command}`, 'accent-magenta'));
+        const isLong = entry.command.length > COMMAND_COLLAPSE_THRESHOLD || /[\r\n]/.test(entry.command);
+        if (!isLong) {
+          tdCmd.appendChild(makeSpan(`$ ${entry.command}`, 'accent-magenta'));
+        } else {
+          const entryKey = entry.id || `${entry.timestamp}-${entry.session_id}`;
+          const expanded = state.expandedCommands.has(entryKey);
+
+          if (!expanded) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'cmd-collapse-btn';
+            btn.setAttribute('aria-expanded', 'false');
+
+            const preview = entry.command.replace(/\s+/g, ' ').trim().slice(0, COMMAND_PREVIEW_LEN);
+            btn.appendChild(makeSpan(`$ ${preview}...`, 'accent-magenta'));
+            btn.appendChild(makeSpan(`[展开 (${entry.command.length} 字符)]`, 'cmd-toggle-tag'));
+            btn.addEventListener('click', () => {
+              state.expandedCommands.add(entryKey);
+              renderLogs(state.logs, state.totalLogs);
+            });
+            tdCmd.appendChild(btn);
+          } else {
+            const fullSpan = makeSpan(`$ ${entry.command}`, 'cmd-full accent-magenta');
+            tdCmd.appendChild(fullSpan);
+
+            const collapseBtn = document.createElement('button');
+            collapseBtn.type = 'button';
+            collapseBtn.className = 'btn btn-inline cmd-collapse-action';
+            collapseBtn.setAttribute('aria-expanded', 'true');
+            collapseBtn.textContent = '[收起]';
+            collapseBtn.addEventListener('click', () => {
+              state.expandedCommands.delete(entryKey);
+              renderLogs(state.logs, state.totalLogs);
+            });
+            tdCmd.appendChild(collapseBtn);
+          }
+        }
         if (entry.detail) {
           tdCmd.appendChild(makeSpan(entry.detail, 'cell-mono-sub'));
         }
@@ -468,6 +508,9 @@
     if (changed && resetFilters) {
       el.filterEvent.value = '';
       el.filterQuery.value = '';
+    }
+    if (changed) {
+      state.expandedCommands.clear();
     }
     applyViewVisibility();
     refreshActiveView();
@@ -583,6 +626,7 @@
 
     try {
       await apiFetch(`/api/logs?honeypot_id=${encodeURIComponent(state.selectedID)}`, { method: 'DELETE' });
+      state.expandedCommands.clear();
       await refreshActiveView();
     } catch (err) {
       showBanner(`清空日志失败：${err.message}`);
