@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -128,7 +130,111 @@ func TestAPIStaticAndHoneypotFlow(t *testing.T) {
 	_ = sess.Close()
 	_ = sshClient.Close()
 
-	// 5. Query logs and overview.
+	// 5. Get single honeypot detail, query logs, export JSONL & CSV, and overview.
+	getResp, err := http.Get(ts.URL + "/api/honeypots/" + hpID)
+	if err != nil {
+		t.Fatalf("GET /api/honeypots/{id} failed: %v", err)
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on get honeypot detail, got %d", getResp.StatusCode)
+	}
+	var detailBody struct {
+		Honeypot model.HoneypotView `json:"honeypot"`
+	}
+	if err := json.NewDecoder(getResp.Body).Decode(&detailBody); err != nil {
+		t.Fatalf("decode detail failed: %v", err)
+	}
+	if detailBody.Honeypot.ID != hpID || detailBody.Honeypot.CommandCount < 1 {
+		t.Fatalf("unexpected honeypot detail: %+v", detailBody.Honeypot)
+	}
+
+	// Execute a formula-prefixed command to verify CSV formula neutralization on export.
+	sess2, err := func() (*ssh.Session, error) {
+		c, dialErr := ssh.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), &ssh.ClientConfig{
+			User:            "admin",
+			Auth:            []ssh.AuthMethod{ssh.Password("honeypot-pass")},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout:         3 * time.Second,
+		})
+		if dialErr != nil {
+			return nil, dialErr
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		return c.NewSession()
+	}()
+	if err != nil {
+		t.Fatalf("second ssh session failed: %v", err)
+	}
+	_, _ = sess2.CombinedOutput("=cmd|'/C calc'!A0")
+	_ = sess2.Close()
+
+	// JSONL export.
+	expJSONResp, err := http.Get(ts.URL + "/api/honeypots/" + hpID + "/logs/export?format=jsonl&event_type=command")
+	if err != nil {
+		t.Fatalf("GET jsonl export failed: %v", err)
+	}
+	defer expJSONResp.Body.Close()
+	if expJSONResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for jsonl export, got %d", expJSONResp.StatusCode)
+	}
+	if cd := expJSONResp.Header.Get("Content-Disposition"); !strings.Contains(cd, "attachment;") || !strings.Contains(cd, ".jsonl") {
+		t.Fatalf("unexpected Content-Disposition: %q", cd)
+	}
+	jsonBytes, _ := io.ReadAll(expJSONResp.Body)
+	lines := strings.Split(strings.TrimSpace(string(jsonBytes)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 exported command lines, got %d (%q)", len(lines), string(jsonBytes))
+	}
+
+	// CSV export.
+	expCSVResp, err := http.Get(ts.URL + "/api/honeypots/" + hpID + "/logs/export?format=csv")
+	if err != nil {
+		t.Fatalf("GET csv export failed: %v", err)
+	}
+	defer expCSVResp.Body.Close()
+	if expCSVResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for csv export, got %d", expCSVResp.StatusCode)
+	}
+	csvRaw, _ := io.ReadAll(expCSVResp.Body)
+	if !bytes.HasPrefix(csvRaw, []byte{0xEF, 0xBB, 0xBF}) {
+		t.Fatalf("expected UTF-8 BOM in CSV export")
+	}
+	records, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(csvRaw, []byte{0xEF, 0xBB, 0xBF}))).ReadAll()
+	if err != nil {
+		t.Fatalf("parse CSV export failed: %v", err)
+	}
+	if len(records) < 3 {
+		t.Fatalf("expected header + rows in CSV export, got %d rows", len(records))
+	}
+	var sawSanitizedFormula bool
+	for _, row := range records[1:] {
+		if row[10] == "'=cmd|'/C calc'!A0" {
+			sawSanitizedFormula = true
+		}
+	}
+	if !sawSanitizedFormula {
+		t.Fatalf("expected neutralized formula cell in CSV export, got %+v", records)
+	}
+
+	// Unsupported format -> 400; missing honeypot -> 404.
+	badFmtResp, err := http.Get(ts.URL + "/api/honeypots/" + hpID + "/logs/export?format=xml")
+	if err != nil {
+		t.Fatalf("GET invalid export format failed: %v", err)
+	}
+	_ = badFmtResp.Body.Close()
+	if badFmtResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 on unsupported format, got %d", badFmtResp.StatusCode)
+	}
+	missingExpResp, err := http.Get(ts.URL + "/api/honeypots/missing-hp/logs/export?format=csv")
+	if err != nil {
+		t.Fatalf("GET missing export failed: %v", err)
+	}
+	_ = missingExpResp.Body.Close()
+	if missingExpResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 on missing honeypot export, got %d", missingExpResp.StatusCode)
+	}
+
 	logResp, err := http.Get(ts.URL + "/api/logs?event_type=command&honeypot_id=" + hpID)
 	if err != nil {
 		t.Fatalf("GET /api/logs failed: %v", err)
@@ -141,7 +247,7 @@ func TestAPIStaticAndHoneypotFlow(t *testing.T) {
 	if err := json.NewDecoder(logResp.Body).Decode(&logBody); err != nil {
 		t.Fatalf("decode logs failed: %v", err)
 	}
-	if logBody.Total != 1 || len(logBody.Logs) != 1 || logBody.Logs[0].Command != "cat /etc/hostname" {
+	if logBody.Total != 2 || len(logBody.Logs) != 2 || logBody.Logs[1].Command != "cat /etc/hostname" {
 		t.Fatalf("unexpected command logs: %+v", logBody)
 	}
 

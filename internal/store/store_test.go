@@ -191,6 +191,11 @@ func TestStoreLogsQueryStatsAndClear(t *testing.T) {
 		t.Fatalf("expected keyword query hit log-3, got %+v", gotQ)
 	}
 
+	exported := reloaded.ExportLogs(model.LogFilter{HoneypotID: "hp-1"})
+	if len(exported) != 3 || exported[0].ID != "log-1" || exported[2].ID != "log-3" {
+		t.Fatalf("expected oldest-first order for ExportLogs, got %+v", exported)
+	}
+
 	perHP, overview := reloaded.ComputeStats()
 	if overview.TotalConnections != 2 || overview.AuthSuccessCount != 1 || overview.AuthFailureCount != 1 || overview.CommandCount != 2 || overview.UniqueIPCount != 3 {
 		t.Fatalf("unexpected overview stats: %+v", overview)

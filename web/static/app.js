@@ -2,6 +2,8 @@
   'use strict';
 
   const state = {
+    selectedID: null,
+    selectedHoneypot: null,
     honeypots: [],
     logs: [],
     totalLogs: 0,
@@ -20,18 +22,39 @@
     statAuthSplit: document.getElementById('stat-auth-split'),
     statCommands: document.getElementById('stat-commands'),
     statUniqueIPs: document.getElementById('stat-unique-ips'),
+
+    viewHome: document.getElementById('view-home'),
+    viewDetail: document.getElementById('view-detail'),
+
     honeypotsBody: document.getElementById('honeypots-tbody'),
-    logsBody: document.getElementById('logs-tbody'),
+    btnRefreshHome: document.getElementById('btn-refresh-home'),
+    btnOpenCreate: document.getElementById('btn-open-create'),
+
+    btnBackHome: document.getElementById('btn-back-home'),
+    detailPath: document.getElementById('detail-path'),
+    detailCmd: document.getElementById('detail-cmd'),
+    detailErrorLine: document.getElementById('detail-error-line'),
+    detailName: document.getElementById('detail-name'),
+    detailEndpoint: document.getElementById('detail-endpoint'),
+    detailCredentials: document.getElementById('detail-credentials'),
+    detailState: document.getElementById('detail-state'),
+    btnDetailToggle: document.getElementById('btn-detail-toggle'),
+    btnDetailDelete: document.getElementById('btn-detail-delete'),
+
+    detailLogsPath: document.getElementById('detail-logs-path'),
+    detailLogsCmd: document.getElementById('detail-logs-cmd'),
     logsSummary: document.getElementById('logs-summary'),
+    logsBody: document.getElementById('logs-tbody'),
     filterForm: document.getElementById('log-filter-form'),
-    filterHoneypot: document.getElementById('filter-honeypot'),
     filterEvent: document.getElementById('filter-event'),
     filterQuery: document.getElementById('filter-query'),
     btnResetFilter: document.getElementById('btn-reset-filter'),
+    btnExportJSONL: document.getElementById('btn-export-jsonl'),
+    btnExportCSV: document.getElementById('btn-export-csv'),
     btnTogglePoll: document.getElementById('btn-toggle-poll'),
     btnRefreshLogs: document.getElementById('btn-refresh-logs'),
     btnClearLogs: document.getElementById('btn-clear-logs'),
-    btnOpenCreate: document.getElementById('btn-open-create'),
+
     btnCloseCreate: document.getElementById('btn-close-create'),
     btnCancelCreate: document.getElementById('btn-cancel-create'),
     createModal: document.getElementById('create-modal'),
@@ -42,6 +65,8 @@
     inputUsername: document.getElementById('input-username'),
     inputPassword: document.getElementById('input-password'),
     inputName: document.getElementById('input-name'),
+
+    statusSession: document.getElementById('status-session'),
     statusVersion: document.getElementById('status-version'),
     statusActive: document.getElementById('status-active'),
     statusClock: document.getElementById('status-clock'),
@@ -83,7 +108,9 @@
     }
     if (!resp.ok) {
       const errMsg = payload && payload.error ? payload.error : `HTTP ${resp.status}`;
-      throw new Error(errMsg);
+      const err = new Error(errMsg);
+      err.status = resp.status;
+      throw err;
     }
     return payload;
   }
@@ -111,6 +138,36 @@
     return span;
   }
 
+  function clearChildren(node) {
+    while (node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  }
+
+  function renderCredentialsCell(container, hp, onToggleReveal) {
+    clearChildren(container);
+    const wrap = document.createElement('div');
+    wrap.className = 'cred-wrap';
+    const revealed = state.revealedSecrets.has(hp.id);
+    const pwDisplay = revealed ? hp.password : '••••••••';
+    wrap.appendChild(makeSpan(`${hp.username} : ${pwDisplay}`, ''));
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'btn btn-inline';
+    toggleBtn.textContent = revealed ? '[隐藏]' : '[显示]';
+    toggleBtn.addEventListener('click', () => {
+      if (state.revealedSecrets.has(hp.id)) {
+        state.revealedSecrets.delete(hp.id);
+      } else {
+        state.revealedSecrets.add(hp.id);
+      }
+      onToggleReveal();
+    });
+    wrap.appendChild(toggleBtn);
+    container.appendChild(wrap);
+  }
+
   function renderOverview(overview) {
     if (!overview) return;
     state.overview = overview;
@@ -124,34 +181,9 @@
     el.statusVersion.textContent = (overview.version || 'dev').toUpperCase();
   }
 
-  function syncHoneypotFilterOptions(honeypots) {
-    const currentVal = el.filterHoneypot.value;
-    while (el.filterHoneypot.firstChild) {
-      el.filterHoneypot.removeChild(el.filterHoneypot.firstChild);
-    }
-    const allOpt = document.createElement('option');
-    allOpt.value = '';
-    allOpt.textContent = '全部实例';
-    el.filterHoneypot.appendChild(allOpt);
-
-    for (const hp of honeypots) {
-      const opt = document.createElement('option');
-      opt.value = hp.id;
-      opt.textContent = `${hp.name} (:${hp.port})`;
-      el.filterHoneypot.appendChild(opt);
-    }
-
-    const exists = honeypots.some((hp) => hp.id === currentVal);
-    el.filterHoneypot.value = exists ? currentVal : '';
-  }
-
   function renderHoneypots(honeypots) {
     state.honeypots = honeypots;
-    syncHoneypotFilterOptions(honeypots);
-
-    while (el.honeypotsBody.firstChild) {
-      el.honeypotsBody.removeChild(el.honeypotsBody.firstChild);
-    }
+    clearChildren(el.honeypotsBody);
 
     if (honeypots.length === 0) {
       const tr = document.createElement('tr');
@@ -167,9 +199,14 @@
     for (const hp of honeypots) {
       const tr = document.createElement('tr');
 
-      // NAME / ID
+      // NAME / ID (点击进入具体蜜罐详情)
       const tdName = document.createElement('td');
-      tdName.appendChild(makeSpan(hp.name, 'accent-phosphor'));
+      const nameBtn = document.createElement('button');
+      nameBtn.type = 'button';
+      nameBtn.className = 'link-btn';
+      nameBtn.textContent = hp.name;
+      nameBtn.addEventListener('click', () => navigateToHoneypot(hp.id));
+      tdName.appendChild(nameBtn);
       tdName.appendChild(makeSpan(hp.id, 'cell-mono-sub'));
       tr.appendChild(tdName);
 
@@ -185,26 +222,7 @@
 
       // CREDENTIALS
       const tdCred = document.createElement('td');
-      const credWrap = document.createElement('div');
-      credWrap.className = 'cred-wrap';
-      const revealed = state.revealedSecrets.has(hp.id);
-      const pwDisplay = revealed ? hp.password : '••••••••';
-      credWrap.appendChild(makeSpan(`${hp.username} : ${pwDisplay}`, ''));
-
-      const toggleBtn = document.createElement('button');
-      toggleBtn.type = 'button';
-      toggleBtn.className = 'btn btn-inline';
-      toggleBtn.textContent = revealed ? '[隐藏]' : '[显示]';
-      toggleBtn.addEventListener('click', () => {
-        if (state.revealedSecrets.has(hp.id)) {
-          state.revealedSecrets.delete(hp.id);
-        } else {
-          state.revealedSecrets.add(hp.id);
-        }
-        renderHoneypots(state.honeypots);
-      });
-      credWrap.appendChild(toggleBtn);
-      tdCred.appendChild(credWrap);
+      renderCredentialsCell(tdCred, hp, () => renderHoneypots(state.honeypots));
       tr.appendChild(tdCred);
 
       // STATE
@@ -235,22 +253,19 @@
       const actionWrap = document.createElement('div');
       actionWrap.className = 'row-actions';
 
+      const detailBtn = document.createElement('button');
+      detailBtn.type = 'button';
+      detailBtn.className = 'btn btn-inline btn-primary';
+      detailBtn.textContent = '[进入详情]';
+      detailBtn.addEventListener('click', () => navigateToHoneypot(hp.id));
+      actionWrap.appendChild(detailBtn);
+
       const toggleStateBtn = document.createElement('button');
       toggleStateBtn.type = 'button';
       toggleStateBtn.className = 'btn btn-inline';
       toggleStateBtn.textContent = hp.status === 'running' ? '[停止]' : '[启动]';
       toggleStateBtn.addEventListener('click', () => handleToggleHoneypot(hp));
       actionWrap.appendChild(toggleStateBtn);
-
-      const filterBtn = document.createElement('button');
-      filterBtn.type = 'button';
-      filterBtn.className = 'btn btn-inline';
-      filterBtn.textContent = '[日志]';
-      filterBtn.addEventListener('click', () => {
-        el.filterHoneypot.value = hp.id;
-        refreshLogs();
-      });
-      actionWrap.appendChild(filterBtn);
 
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
@@ -264,6 +279,50 @@
 
       el.honeypotsBody.appendChild(tr);
     }
+  }
+
+  function renderHoneypotDetail(hp) {
+    state.selectedHoneypot = hp;
+    if (!hp) return;
+
+    el.detailPath.textContent = `~/fishing/honeypots/${hp.name}`;
+    el.detailCmd.textContent = `fishing inspect --id=${hp.id}`;
+    el.detailLogsPath.textContent = `~/fishing/honeypots/${hp.name}/logs`;
+    el.detailLogsCmd.textContent = `fishing logs --honeypot=${hp.id} --limit=200`;
+    el.statusSession.textContent = `FISHING // SSH-HONEYPOT [${hp.name}]`;
+
+    if (hp.error_message) {
+      el.detailErrorLine.textContent = `# 监听异常：${hp.error_message}`;
+      el.detailErrorLine.classList.add('accent-amber');
+    } else {
+      el.detailErrorLine.textContent = '# 以下日志仅展示当前蜜罐实例捕获的连接尝试与会话指令。';
+      el.detailErrorLine.classList.remove('accent-amber');
+    }
+
+    clearChildren(el.detailName);
+    el.detailName.appendChild(makeSpan(hp.name, 'accent-phosphor'));
+    el.detailName.appendChild(makeSpan(hp.id, 'cell-mono-sub'));
+
+    el.detailEndpoint.textContent = `${(hp.type || 'ssh').toUpperCase()} :${hp.port}`;
+
+    renderCredentialsCell(el.detailCredentials, hp, () => renderHoneypotDetail(state.selectedHoneypot));
+
+    clearChildren(el.detailState);
+    let stateText = 'STOPPED';
+    let stateClass = 'accent-grey';
+    if (hp.status === 'running') {
+      stateText = 'RUNNING';
+      stateClass = 'accent-phosphor';
+    } else if (hp.status === 'error') {
+      stateText = 'ERROR';
+      stateClass = 'accent-amber';
+    }
+    el.detailState.appendChild(makeSpan(stateText, stateClass));
+    el.detailState.appendChild(
+      makeSpan(`CONN ${hp.connection_count} / CMD ${hp.command_count} (OK ${hp.auth_success_count} / FAIL ${hp.auth_failure_count})`, 'cell-mono-sub')
+    );
+
+    el.btnDetailToggle.textContent = hp.status === 'running' ? '[停止]' : '[启动]';
   }
 
   function formatEventBadge(entry) {
@@ -288,17 +347,14 @@
     state.totalLogs = total;
 
     el.logsSummary.textContent = `# 当前显示 ${logs.length} 条记录（共匹配 ${total} 条）。`;
-
-    while (el.logsBody.firstChild) {
-      el.logsBody.removeChild(el.logsBody.firstChild);
-    }
+    clearChildren(el.logsBody);
 
     if (logs.length === 0) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.colSpan = 6;
       td.className = 'comment-cell';
-      td.textContent = '# 暂无匹配的访问或命令审计记录。蜜罐端口收到连接或指令后将显示于此。';
+      td.textContent = '# 当前蜜罐暂无匹配的访问或命令审计记录。';
       tr.appendChild(td);
       el.logsBody.appendChild(tr);
       return;
@@ -321,11 +377,10 @@
       }
       tr.appendChild(tdIP);
 
-      // TARGET
-      const tdTarget = document.createElement('td');
-      tdTarget.appendChild(makeSpan(`${entry.honeypot_name || entry.honeypot_id} :${entry.honeypot_port}`, ''));
-      tdTarget.appendChild(makeSpan(`SID ${entry.session_id || '-'}`, 'cell-mono-sub'));
-      tr.appendChild(tdTarget);
+      // SESSION
+      const tdSession = document.createElement('td');
+      tdSession.appendChild(makeSpan(entry.session_id || '-', 'accent-grey'));
+      tr.appendChild(tdSession);
 
       // EVENT
       const tdEvent = document.createElement('td');
@@ -361,27 +416,10 @@
     }
   }
 
-  async function refreshAll() {
-    try {
-      const [overview, hpData, logData] = await Promise.all([
-        apiFetch('/api/overview'),
-        apiFetch('/api/honeypots'),
-        apiFetch(buildLogsURL()),
-      ]);
-      showBanner('');
-      renderOverview(overview);
-      renderHoneypots(hpData.honeypots || []);
-      renderLogs(logData.logs || [], logData.total || 0);
-    } catch (err) {
-      showBanner(`数据同步失败：${err.message}`);
-    }
-  }
-
-  function buildLogsURL() {
+  function buildFilterParams(includeLimit) {
     const params = new URLSearchParams();
-    params.set('limit', '200');
-    if (el.filterHoneypot.value) {
-      params.set('honeypot_id', el.filterHoneypot.value);
+    if (includeLimit) {
+      params.set('limit', '200');
     }
     if (el.filterEvent.value) {
       params.set('event_type', el.filterEvent.value);
@@ -389,15 +427,118 @@
     if (el.filterQuery.value.trim()) {
       params.set('q', el.filterQuery.value.trim());
     }
+    return params;
+  }
+
+  function buildDetailLogsURL(id) {
+    const params = buildFilterParams(true);
+    params.set('honeypot_id', id);
     return `/api/logs?${params.toString()}`;
   }
 
-  async function refreshLogs() {
+  function buildExportURL(id, format) {
+    const params = buildFilterParams(false);
+    params.set('format', format);
+    return `/api/honeypots/${encodeURIComponent(id)}/logs/export?${params.toString()}`;
+  }
+
+  function parseRouteFromHash() {
+    const hash = window.location.hash || '#/';
+    const match = /^#\/honeypots\/([^/?#]+)$/.exec(hash);
+    if (match) {
+      return decodeURIComponent(match[1]);
+    }
+    return null;
+  }
+
+  function applyViewVisibility() {
+    const inDetail = Boolean(state.selectedID);
+    el.viewHome.classList.toggle('hidden', inDetail);
+    el.viewDetail.classList.toggle('hidden', !inDetail);
+    if (!inDetail) {
+      el.statusSession.textContent = 'FISHING // SSH-HONEYPOT [HOME]';
+    }
+  }
+
+  function syncRouteFromHash(resetFilters) {
+    const nextID = parseRouteFromHash();
+    const changed = nextID !== state.selectedID;
+    state.selectedID = nextID;
+
+    if (changed && resetFilters) {
+      el.filterEvent.value = '';
+      el.filterQuery.value = '';
+    }
+    applyViewVisibility();
+    refreshActiveView();
+  }
+
+  function navigateHome() {
+    if (window.location.hash !== '#/' && window.location.hash !== '') {
+      window.location.hash = '#/';
+    } else {
+      syncRouteFromHash(true);
+    }
+  }
+
+  function navigateToHoneypot(id) {
+    const targetHash = `#/honeypots/${encodeURIComponent(id)}`;
+    if (window.location.hash !== targetHash) {
+      window.location.hash = targetHash;
+    } else {
+      syncRouteFromHash(true);
+    }
+  }
+
+  async function refreshActiveView() {
+    if (!state.selectedID) {
+      try {
+        const [overview, hpData] = await Promise.all([
+          apiFetch('/api/overview'),
+          apiFetch('/api/honeypots'),
+        ]);
+        showBanner('');
+        renderOverview(overview);
+        renderHoneypots(hpData.honeypots || []);
+      } catch (err) {
+        showBanner(`数据同步失败：${err.message}`);
+      }
+      return;
+    }
+
+    const id = state.selectedID;
+    try {
+      const [overview, detailData, logData] = await Promise.all([
+        apiFetch('/api/overview'),
+        apiFetch(`/api/honeypots/${encodeURIComponent(id)}`),
+        apiFetch(buildDetailLogsURL(id)),
+      ]);
+      if (state.selectedID !== id) return;
+      showBanner('');
+      renderOverview(overview);
+      renderHoneypotDetail(detailData.honeypot);
+      renderLogs(logData.logs || [], logData.total || 0);
+    } catch (err) {
+      if (err.status === 404) {
+        state.selectedID = null;
+        state.selectedHoneypot = null;
+        window.location.hash = '#/';
+        showBanner('所选蜜罐实例已不存在，已返回实例列表。');
+        return;
+      }
+      showBanner(`蜜罐详情读取失败：${err.message}`);
+    }
+  }
+
+  async function refreshDetailLogsOnly() {
+    if (!state.selectedID) return;
+    const id = state.selectedID;
     try {
       const [overview, logData] = await Promise.all([
         apiFetch('/api/overview'),
-        apiFetch(buildLogsURL()),
+        apiFetch(buildDetailLogsURL(id)),
       ]);
+      if (state.selectedID !== id) return;
       showBanner('');
       renderOverview(overview);
       renderLogs(logData.logs || [], logData.total || 0);
@@ -407,40 +548,57 @@
   }
 
   async function handleToggleHoneypot(hp) {
+    if (!hp) return;
     const action = hp.status === 'running' ? 'stop' : 'start';
     try {
       await apiFetch(`/api/honeypots/${encodeURIComponent(hp.id)}/${action}`, { method: 'POST' });
-      await refreshAll();
+      await refreshActiveView();
     } catch (err) {
       showBanner(`操作失败：${err.message}`);
     }
   }
 
   async function handleDeleteHoneypot(hp) {
-    const confirmed = window.confirm(`确认删除蜜罐「${hp.name}」(端口 ${hp.port})？历史访问日志将保留，停止后可自行清空。`);
+    if (!hp) return;
+    const confirmed = window.confirm(`确认删除蜜罐「${hp.name}」(端口 ${hp.port})？历史访问日志将保留至数据目录。`);
     if (!confirmed) return;
     try {
       await apiFetch(`/api/honeypots/${encodeURIComponent(hp.id)}`, { method: 'DELETE' });
       state.revealedSecrets.delete(hp.id);
-      await refreshAll();
+      if (state.selectedID === hp.id) {
+        state.selectedHoneypot = null;
+        navigateHome();
+      } else {
+        await refreshActiveView();
+      }
     } catch (err) {
       showBanner(`删除蜜罐失败：${err.message}`);
     }
   }
 
   async function handleClearLogs() {
-    const hpID = el.filterHoneypot.value;
-    const scopeLabel = hpID ? '当前选中蜜罐的' : '全部';
-    const confirmed = window.confirm(`确认清空${scopeLabel}访问与命令审计日志？该操作不可撤销。`);
+    if (!state.selectedID) return;
+    const confirmed = window.confirm('确认清空当前蜜罐实例的全部访问与命令审计日志？该操作不可撤销。');
     if (!confirmed) return;
 
-    const url = hpID ? `/api/logs?honeypot_id=${encodeURIComponent(hpID)}` : '/api/logs';
     try {
-      await apiFetch(url, { method: 'DELETE' });
-      await refreshAll();
+      await apiFetch(`/api/logs?honeypot_id=${encodeURIComponent(state.selectedID)}`, { method: 'DELETE' });
+      await refreshActiveView();
     } catch (err) {
       showBanner(`清空日志失败：${err.message}`);
     }
+  }
+
+  function handleExportLogs(format) {
+    if (!state.selectedID) return;
+    const url = buildExportURL(state.selectedID, format);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '';
+    link.className = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   function openCreateModal() {
@@ -499,7 +657,7 @@
         }),
       });
       closeCreateModal();
-      await refreshAll();
+      await refreshActiveView();
     } catch (err) {
       showCreateError(`创建失败：${err.message}`);
     } finally {
@@ -513,7 +671,7 @@
     el.btnTogglePoll.textContent = state.autoRefresh ? '[自动刷新: 开]' : '[自动刷新: 关]';
     if (state.autoRefresh) {
       startPolling();
-      refreshAll();
+      refreshActiveView();
     } else {
       stopPolling();
     }
@@ -523,7 +681,7 @@
     stopPolling();
     state.pollTimer = window.setInterval(() => {
       if (state.autoRefresh && !document.hidden) {
-        refreshAll();
+        refreshActiveView();
       }
     }, 3000);
   }
@@ -541,6 +699,9 @@
   }
 
   function bindEvents() {
+    window.addEventListener('hashchange', () => syncRouteFromHash(true));
+
+    el.btnRefreshHome.addEventListener('click', refreshActiveView);
     el.btnOpenCreate.addEventListener('click', openCreateModal);
     el.btnCloseCreate.addEventListener('click', closeCreateModal);
     el.btnCancelCreate.addEventListener('click', closeCreateModal);
@@ -558,27 +719,31 @@
       }
     });
 
+    el.btnBackHome.addEventListener('click', navigateHome);
+    el.btnDetailToggle.addEventListener('click', () => handleToggleHoneypot(state.selectedHoneypot));
+    el.btnDetailDelete.addEventListener('click', () => handleDeleteHoneypot(state.selectedHoneypot));
+
+    el.btnExportJSONL.addEventListener('click', () => handleExportLogs('jsonl'));
+    el.btnExportCSV.addEventListener('click', () => handleExportLogs('csv'));
     el.btnTogglePoll.addEventListener('click', toggleAutoRefresh);
-    el.btnRefreshLogs.addEventListener('click', refreshAll);
+    el.btnRefreshLogs.addEventListener('click', refreshActiveView);
     el.btnClearLogs.addEventListener('click', handleClearLogs);
 
     el.filterForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      refreshLogs();
+      refreshDetailLogsOnly();
     });
-    el.filterHoneypot.addEventListener('change', refreshLogs);
-    el.filterEvent.addEventListener('change', refreshLogs);
+    el.filterEvent.addEventListener('change', refreshDetailLogsOnly);
     el.btnResetFilter.addEventListener('click', () => {
-      el.filterHoneypot.value = '';
       el.filterEvent.value = '';
       el.filterQuery.value = '';
-      refreshLogs();
+      refreshDetailLogsOnly();
     });
   }
 
   bindEvents();
   updateClock();
   window.setInterval(updateClock, 1000);
-  refreshAll();
+  syncRouteFromHash(false);
   startPolling();
 })();

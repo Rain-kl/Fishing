@@ -6,15 +6,25 @@ services:
       dockerfile: Dockerfile
     container_name: fishing-honeypot
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "8080:8080"
+      # 非 root 容器仅能监听 1024 及以上非特权端口；如需对外暴露标准 22 端口，
+      # 可直接通过宿主机端口映射转发至容器内部端口（例如 "22:2222"）。
       - "2222-2232:2222-2232"
-    # 若需直接在宿主机监听 22 等任意动态添加的端口（Linux 环境适用），
-    # 可取消下方 network_mode 注释并移除上方 ports 映射：
-    # network_mode: host
     volumes:
-      - ./data:/data
+      # 默认使用命名卷自动继承容器 /data (10001:10001) 权限；
+      # 若需绑定宿主机目录 ./data:/data，请在 Linux 宿主机先执行:
+      # mkdir -p ./data && chown -R 10001:10001 ./data
+      - fishing-data:/data
     environment:
       FISHING_ADDR: ":8080"
       FISHING_DATA_DIR: "/data"
       FISHING_BIND_HOST: "0.0.0.0"
+
+volumes:
+  fishing-data:

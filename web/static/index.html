@@ -15,7 +15,7 @@
         <span class="cursor-block" aria-hidden="true"></span>
       </div>
       <div class="cmd-output">
-        <div class="comment-line"># SSH 仿真蜜罐控制台：记录来源 IP、认证凭据及会话命令，无真实系统执行能力。</div>
+        <div class="comment-line"># SSH 仿真蜜罐控制台：支持动态创建仿真 SSH 端口，进入具体蜜罐实例后可审计与导出访问日志。</div>
         <div class="overview-grid" id="overview-metrics">
           <div class="metric-item">
             <span class="metric-label">HONEYPOTS</span>
@@ -44,10 +44,12 @@
     <div id="global-banner" class="banner hidden" role="alert"></div>
 
     <main class="main-stack">
-      <section class="terminal-panel" aria-labelledby="honeypots-heading">
+      <!-- 首页视图：仅展示蜜罐实例列表，不包含全局日志 -->
+      <section id="view-home" class="terminal-panel" aria-labelledby="honeypots-heading">
         <div class="panel-header">
           <span class="panel-path" id="honeypots-heading">~/fishing/honeypots</span>
           <div class="panel-actions">
+            <button type="button" class="btn" id="btn-refresh-home">[刷新]</button>
             <button type="button" class="btn btn-primary" id="btn-open-create">[+ 添加蜜罐]</button>
           </div>
         </div>
@@ -58,7 +60,7 @@
             <span class="cmd-cmd">fishing ps --type=ssh --all</span>
           </div>
           <div class="cmd-output-sm">
-            <div class="comment-line"># 创建即启动对应 TCP 端口监听；默认脱敏展示登录密码，可按行切换明文视图。</div>
+            <div class="comment-line"># 创建后立即监听指定端口；点击蜜罐名称或「[进入详情]」查看该实例的访问与命令日志。</div>
           </div>
         </div>
 
@@ -84,71 +86,110 @@
         </div>
       </section>
 
-      <section class="terminal-panel" aria-labelledby="logs-heading">
-        <div class="panel-header">
-          <span class="panel-path" id="logs-heading">~/fishing/logs</span>
-          <div class="panel-actions">
-            <button type="button" class="btn" id="btn-toggle-poll">[自动刷新: 开]</button>
-            <button type="button" class="btn" id="btn-refresh-logs">[刷新]</button>
-            <button type="button" class="btn btn-warn" id="btn-clear-logs">[清空日志]</button>
+      <!-- 具体蜜罐详情视图：展示实例元信息、专属日志与导出功能 -->
+      <div id="view-detail" class="detail-stack hidden">
+        <section class="terminal-panel" aria-labelledby="detail-path">
+          <div class="panel-header">
+            <div class="detail-nav-group">
+              <button type="button" class="btn" id="btn-back-home">[← 返回列表]</button>
+              <span class="panel-path" id="detail-path">~/fishing/honeypots/detail</span>
+            </div>
+            <div class="panel-actions">
+              <button type="button" class="btn" id="btn-detail-toggle">[停止]</button>
+              <button type="button" class="btn btn-warn" id="btn-detail-delete">[删除]</button>
+            </div>
           </div>
-        </div>
 
-        <div class="cmd-block-inline">
-          <div class="cmd-line-sm">
-            <span class="cmd-prompt">$</span>
-            <span class="cmd-cmd">tail -n 200 -f /data/logs.jsonl</span>
+          <div class="cmd-block-inline">
+            <div class="cmd-line-sm">
+              <span class="cmd-prompt">$</span>
+              <span class="cmd-cmd" id="detail-cmd">fishing inspect --id=unknown</span>
+            </div>
+            <div class="comment-line" id="detail-error-line"></div>
           </div>
-          <div class="comment-line" id="logs-summary"># 正在加载审计日志...</div>
-        </div>
 
-        <form class="filter-bar" id="log-filter-form" autocomplete="off">
-          <label class="filter-field">
-            <span class="field-label">INSTANCE</span>
-            <select id="filter-honeypot" class="input-ctrl">
-              <option value="">全部实例</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span class="field-label">EVENT</span>
-            <select id="filter-event" class="input-ctrl">
-              <option value="">全部事件</option>
-              <option value="auth_attempt">认证尝试 (AUTH)</option>
-              <option value="command">执行命令 (COMMAND)</option>
-              <option value="session_open">会话建立 (OPEN)</option>
-              <option value="session_close">会话关闭 (CLOSE)</option>
-            </select>
-          </label>
-          <label class="filter-field filter-grow">
-            <span class="field-label">FILTER (IP / USER / CMD)</span>
-            <input type="text" id="filter-query" class="input-ctrl" placeholder="输入来源 IP、用户名或命令关键词">
-          </label>
-          <div class="filter-actions">
-            <button type="submit" class="btn">[筛选]</button>
-            <button type="button" class="btn" id="btn-reset-filter">[重置]</button>
+          <div class="detail-meta-grid" id="detail-meta-grid">
+            <div class="detail-kv-item">
+              <span class="detail-kv-label">INSTANCE / ID</span>
+              <span class="detail-kv-val" id="detail-name">-</span>
+            </div>
+            <div class="detail-kv-item">
+              <span class="detail-kv-label">PROTOCOL / PORT</span>
+              <span class="detail-kv-val accent-cyan" id="detail-endpoint">-</span>
+            </div>
+            <div class="detail-kv-item">
+              <span class="detail-kv-label">CREDENTIALS</span>
+              <div class="detail-kv-val" id="detail-credentials">-</div>
+            </div>
+            <div class="detail-kv-item">
+              <span class="detail-kv-label">STATE / TELEMETRY</span>
+              <span class="detail-kv-val" id="detail-state">-</span>
+            </div>
           </div>
-        </form>
+        </section>
 
-        <div class="table-wrap">
-          <table class="aligned-table logs-table" aria-label="访问与命令审计日志">
-            <thead>
-              <tr>
-                <th>TIMESTAMP (UTC)</th>
-                <th>SOURCE IP</th>
-                <th>TARGET</th>
-                <th>EVENT</th>
-                <th>AUTH / USER</th>
-                <th>COMMAND / DETAIL</th>
-              </tr>
-            </thead>
-            <tbody id="logs-tbody">
-              <tr>
-                <td colspan="6" class="comment-cell"># 正在读取审计日志...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <section class="terminal-panel" aria-labelledby="detail-logs-path">
+          <div class="panel-header">
+            <span class="panel-path" id="detail-logs-path">~/fishing/honeypots/detail/logs</span>
+            <div class="panel-actions">
+              <button type="button" class="btn btn-primary" id="btn-export-jsonl">[↓ 导出 JSONL]</button>
+              <button type="button" class="btn btn-primary" id="btn-export-csv">[↓ 导出 CSV]</button>
+              <button type="button" class="btn" id="btn-toggle-poll">[自动刷新: 开]</button>
+              <button type="button" class="btn" id="btn-refresh-logs">[刷新]</button>
+              <button type="button" class="btn btn-warn" id="btn-clear-logs">[清空日志]</button>
+            </div>
+          </div>
+
+          <div class="cmd-block-inline">
+            <div class="cmd-line-sm">
+              <span class="cmd-prompt">$</span>
+              <span class="cmd-cmd" id="detail-logs-cmd">fishing logs --honeypot=unknown --limit=200</span>
+            </div>
+            <div class="comment-line" id="logs-summary"># 正在加载审计日志...</div>
+          </div>
+
+          <form class="filter-bar" id="log-filter-form" autocomplete="off">
+            <label class="filter-field">
+              <span class="field-label">EVENT</span>
+              <select id="filter-event" class="input-ctrl">
+                <option value="">全部事件</option>
+                <option value="auth_attempt">认证尝试 (AUTH)</option>
+                <option value="command">执行命令 (COMMAND)</option>
+                <option value="session_open">会话建立 (OPEN)</option>
+                <option value="session_close">会话关闭 (CLOSE)</option>
+              </select>
+            </label>
+            <label class="filter-field filter-grow">
+              <span class="field-label">FILTER (IP / USER / CMD)</span>
+              <input type="text" id="filter-query" class="input-ctrl" placeholder="输入来源 IP、用户名或命令关键词">
+            </label>
+            <div class="filter-actions">
+              <button type="submit" class="btn">[筛选]</button>
+              <button type="button" class="btn" id="btn-reset-filter">[重置]</button>
+            </div>
+          </form>
+
+          <div class="table-wrap">
+            <table class="aligned-table logs-table" aria-label="当前蜜罐访问与命令审计日志">
+              <thead>
+                <tr>
+                  <th>TIMESTAMP (UTC)</th>
+                  <th>SOURCE IP</th>
+                  <th>SESSION</th>
+                  <th>EVENT</th>
+                  <th>AUTH / USER</th>
+                  <th>COMMAND / DETAIL</th>
+                </tr>
+              </thead>
+              <tbody id="logs-tbody">
+                <tr>
+                  <td colspan="6" class="comment-cell"># 正在读取审计日志...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 
@@ -213,7 +254,7 @@
 
   <footer class="status-bar" aria-label="系统状态栏">
     <div class="status-left">
-      <span id="status-session">FISHING // SSH-HONEYPOT [MAIN]</span>
+      <span id="status-session">FISHING // SSH-HONEYPOT [HOME]</span>
       <span id="status-version">DEV</span>
     </div>
     <div class="status-right">

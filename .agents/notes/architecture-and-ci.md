@@ -12,9 +12,13 @@
 
 ## 2. 无 QEMU Alpine 多架构容器化与 CI 设计
 
-- **无 QEMU 核心原理**：
-  - `Dockerfile` 构建阶段声明 `FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder`，始终在宿主 CI 机器（`linux/amd64`）原生指令集上运行 Go 工具链，利用 Go 内置的 `CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}` 直接交叉编译出目标架构静态二进制，同时在构建阶段提前准备好 `/out/data` 空目录。
-  - 运行阶段使用 `FROM alpine:3.21`，且**完全不包含任何 `RUN` 指令**，仅通过 `COPY --from=builder` 拷贝 CA 证书、静态二进制文件与 `/data` 目录，从而无需任何用户态模拟器（不使用 `docker/setup-qemu-action`）即可由 Buildx 直接打包 `linux/amd64` 与 `linux/arm64` 双架构镜像。
+- **无 QEMU 核心原理与低权限运行**：
+  - `Dockerfile` 构建阶段声明 `FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder`，始终在宿主 CI 机器（`linux/amd64`）原生指令集上运行 Go 工具链，利用 Go 内置的 `CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}` 直接交叉编译出目标架构静态二进制，同时在构建阶段提前准备好 `/out/data` 空目录；`ARG TARGETOS` 与 `ARG TARGETARCH` 保持无默认值声明，确保 BuildKit 自动注入目标平台。
+  - 运行阶段使用 `FROM alpine:3.21`，且**完全不包含任何 `RUN` 指令**，仅通过 `COPY --from=builder` 拷贝 CA 证书、只读可执行文件（`--chmod=555`）与数据目录（`--chown=10001:10001 --chmod=750`），并显式设置 `USER 10001:10001` 以非特权用户运行。
+  - `docker-compose.yml` 配套启用 `read_only: true`、`cap_drop: ["ALL"]`、`security_opt: ["no-new-privileges:true"]` 与命名卷 `fishing-data:/data`，在不引入 QEMU 的前提下满足最小权限隔离要求。
+- **前端路由与日志导出**：
+  - 首页仅保留全局概览与蜜罐实例列表；通过 URL Hash 路由（`#/honeypots/<id>`）进入具体蜜罐详情后方展示该实例日志，避免首页信息拥挤并减少无用轮询。
+  - 后端新增 `GET /api/honeypots/{id}` 与 `GET /api/honeypots/{id}/logs/export`（支持 `jsonl` 与 `csv`，`csv` 附带 UTF-8 BOM 并对以 `=`, `+`, `-`, `@`, `\t`, `\r` 开头的不可信字段进行公式注入中和）。
 - **CI 发布策略（`.github/workflows/release.yml`）**：
   - GitHub Releases 任务交叉编译 `linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64` 并生成 `checksums.txt`。
   - 容器发布任务对 `${GITHUB_REPOSITORY}` 做小写规范化后推送至 `ghcr.io`。

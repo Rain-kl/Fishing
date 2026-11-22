@@ -132,6 +132,14 @@ func TestManagerCreateLifecycleAndRestore(t *testing.T) {
 		t.Fatalf("expected recorded stats on restored view, got %+v", list[0])
 	}
 
+	gotView, err := mgr2.Get(created.ID)
+	if err != nil || gotView.ID != created.ID || gotView.Status != model.StatusRunning {
+		t.Fatalf("mgr2.Get failed: view=%+v err=%v", gotView, err)
+	}
+	if _, err := mgr2.Get("missing-id"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for missing id, got %v", err)
+	}
+
 	if err := mgr2.Delete(created.ID); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}

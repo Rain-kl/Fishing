@@ -259,16 +259,7 @@ func (s *Store) QueryLogs(filter model.LogFilter) ([]model.LogEntry, int) {
 
 	for i := len(s.logs) - 1; i >= 0; i-- {
 		entry := s.logs[i]
-		if filter.HoneypotID != "" && entry.HoneypotID != filter.HoneypotID {
-			continue
-		}
-		if filter.EventType != "" && entry.EventType != filter.EventType {
-			continue
-		}
-		if ipQuery != "" && !strings.Contains(strings.ToLower(entry.SourceIP), ipQuery) {
-			continue
-		}
-		if textQuery != "" && !matchesQuery(entry, textQuery) {
+		if !matchesFilter(entry, filter, ipQuery, textQuery) {
 			continue
 		}
 		total++
@@ -278,6 +269,40 @@ func (s *Store) QueryLogs(filter model.LogFilter) ([]model.LogEntry, int) {
 	}
 
 	return matched, total
+}
+
+// ExportLogs returns all matching log entries ordered oldest-first without pagination truncation.
+func (s *Store) ExportLogs(filter model.LogFilter) []model.LogEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ipQuery := strings.ToLower(strings.TrimSpace(filter.SourceIP))
+	textQuery := strings.ToLower(strings.TrimSpace(filter.Query))
+
+	matched := make([]model.LogEntry, 0, len(s.logs))
+	for _, entry := range s.logs {
+		if !matchesFilter(entry, filter, ipQuery, textQuery) {
+			continue
+		}
+		matched = append(matched, entry)
+	}
+	return matched
+}
+
+func matchesFilter(entry model.LogEntry, filter model.LogFilter, ipQuery, textQuery string) bool {
+	if filter.HoneypotID != "" && entry.HoneypotID != filter.HoneypotID {
+		return false
+	}
+	if filter.EventType != "" && entry.EventType != filter.EventType {
+		return false
+	}
+	if ipQuery != "" && !strings.Contains(strings.ToLower(entry.SourceIP), ipQuery) {
+		return false
+	}
+	if textQuery != "" && !matchesQuery(entry, textQuery) {
+		return false
+	}
+	return true
 }
 
 func matchesQuery(e model.LogEntry, q string) bool {

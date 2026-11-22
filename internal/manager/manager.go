@@ -215,6 +215,16 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
+// Get returns a single honeypot enriched with live status and audit counters.
+func (m *Manager) Get(id string) (model.HoneypotView, error) {
+	hp, ok := m.store.GetHoneypot(id)
+	if !ok {
+		return model.HoneypotView{}, ErrNotFound
+	}
+	counters, _ := m.store.ComputeStats()
+	return m.buildView(hp, counters[id]), nil
+}
+
 // List returns all honeypots enriched with runtime status and audit counters.
 func (m *Manager) List() []model.HoneypotView {
 	list := m.store.ListHoneypots()
@@ -243,6 +253,11 @@ func (m *Manager) Overview(version string) model.OverviewStats {
 // QueryLogs proxies filtered audit log queries to the underlying store.
 func (m *Manager) QueryLogs(filter model.LogFilter) ([]model.LogEntry, int) {
 	return m.store.QueryLogs(filter)
+}
+
+// ExportLogs returns all matching audit logs in chronological order for download.
+func (m *Manager) ExportLogs(filter model.LogFilter) []model.LogEntry {
+	return m.store.ExportLogs(filter)
 }
 
 // ClearLogs removes persisted logs globally or for a specific honeypot.
